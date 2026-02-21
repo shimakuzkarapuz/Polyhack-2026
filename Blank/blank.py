@@ -267,8 +267,6 @@ class SpriteLoader:
             'monster': 'zero_monstr.png',
             'gold': 'gold.png',
             'station': 'gate_o_r.png',
-            'key': 'key.png',
-            'door': 'door.png',
             'wall': 'wall.png',
             'floor': 'floor.png',
             'heart': 'heart.png'
