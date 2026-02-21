@@ -31,6 +31,8 @@
 
 ~Visual Studio Code
 
+~Deepseek
+
 
 
 
