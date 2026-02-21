@@ -2,6 +2,7 @@ import pygame
 import sys
 import random
 import copy
+import os
 
 # ==================== ОБЩИЕ НАСТРОЙКИ ====================
 SIZE = 10
@@ -32,103 +33,70 @@ V4_PRE_FALL_DELAY = 1000
 # =========================================================
 
 # ---------------------------------------------------------
+# Функция загрузки изображений (с масштабированием)
+# ---------------------------------------------------------
+def load_images():
+    img_x = None
+    img_o = None
+    try:
+        if os.path.exists("krestik.png"):
+            img_x = pygame.image.load("krestik.png")
+            img_x = pygame.transform.scale(img_x, (CELL_SIZE, CELL_SIZE))
+        else:
+            print("Предупреждение: файл krestik.png не найден, будет использоваться рисование")
+        if os.path.exists("zero.png"):
+            img_o = pygame.image.load("zero.png")
+            img_o = pygame.transform.scale(img_o, (CELL_SIZE, CELL_SIZE))
+        else:
+            print("Предупреждение: файл zero.png не найден, будет использоваться рисование")
+    except pygame.error as e:
+        print(f"Ошибка загрузки изображений: {e}")
+    return img_x, img_o
+
+# ---------------------------------------------------------
 # Базовый класс для бота (минимакс с альфа-бета отсечением)
 # ---------------------------------------------------------
 class Bot:
-    def __init__(self, game, max_depth=3):
+    def __init__(self, game, max_depth=1):
         self.game = game
         self.max_depth = max_depth
 
     def get_best_move(self):
-        # Получаем все возможные ходы
         moves = self.game.get_possible_moves(PLAYER_O)
         if not moves:
             return None
 
-        # Быстрая эвристическая оценка каждого хода
-        scored_moves = []
+        # Для глубины 1 просто оцениваем каждый ход и выбираем лучший
+        best_score = -float('inf')
+        best_move = None
         for move in moves:
             game_copy = self.game.copy()
             game_copy.make_move(move)
-            # Оцениваем позицию с точки зрения текущего игрока (O)
             score = self._evaluate(game_copy, PLAYER_O)
-            scored_moves.append((score, move))
-
-        # Сортируем по убыванию оценки
-        scored_moves.sort(reverse=True, key=lambda x: x[0])
-
-        # Ограничиваем количество рассматриваемых ходов (для скорости)
-        if len(scored_moves) > 20:
-            scored_moves = scored_moves[:20]
-
-        # Теперь перебираем в этом порядке
-        best_score = -float('inf')
-        best_move = None
-        alpha = -float('inf')
-        beta = float('inf')
-        for _, move in scored_moves:
-            game_copy = self.game.copy()
-            game_copy.make_move(move)
-            score = self._alphabeta(game_copy, self.max_depth - 1, alpha, beta, False)
             if score > best_score:
                 best_score = score
                 best_move = move
-            alpha = max(alpha, best_score)
         return best_move
-
-    def _alphabeta(self, game, depth, alpha, beta, is_maximizing):
-        if depth == 0 or game.game_over:
-            return self._evaluate(game, PLAYER_O)
-
-        if is_maximizing:
-            value = -float('inf')
-            # Получаем ходы и сортируем их (для улучшения отсечения)
-            moves = game.get_possible_moves(PLAYER_O)
-            # Можно также применить эвристику, но для глубины >0 это дорого
-            for move in moves:
-                game_copy = game.copy()
-                game_copy.make_move(move)
-                value = max(value, self._alphabeta(game_copy, depth - 1, alpha, beta, False))
-                alpha = max(alpha, value)
-                if alpha >= beta:
-                    break
-            return value
-        else:
-            value = float('inf')
-            moves = game.get_possible_moves(PLAYER_X)
-            for move in moves:
-                game_copy = game.copy()
-                game_copy.make_move(move)
-                value = min(value, self._alphabeta(game_copy, depth - 1, alpha, beta, True))
-                beta = min(beta, value)
-                if alpha >= beta:
-                    break
-            return value
 
     def _evaluate(self, game, player):
         opponent = PLAYER_X if player == PLAYER_O else PLAYER_O
         size = game.size
         win_line = game.win_line
-        # Веса для линий разной длины (эмпирические)
         weight = {1: 1, 2: 10, 3: 100, 4: 1000, 5: 10000}
         score = 0
 
-        # Горизонтали
         for r in range(size):
             for c in range(size - win_line + 1):
                 line = [game.board[r][c + i] for i in range(win_line)]
                 score += self._line_score(line, player, opponent, weight)
-        # Вертикали
         for c in range(size):
             for r in range(size - win_line + 1):
                 line = [game.board[r + i][c] for i in range(win_line)]
                 score += self._line_score(line, player, opponent, weight)
-        # Главные диагонали
         for r in range(size - win_line + 1):
             for c in range(size - win_line + 1):
                 line = [game.board[r + i][c + i] for i in range(win_line)]
                 score += self._line_score(line, player, opponent, weight)
-        # Побочные диагонали
         for r in range(size - win_line + 1):
             for c in range(win_line - 1, size):
                 line = [game.board[r + i][c - i] for i in range(win_line)]
@@ -278,7 +246,7 @@ class GameV1:
         new.moves_count = self.moves_count
         return new
 
-def draw_board_v1(screen, game):
+def draw_board_v1(screen, game, img_x, img_o):
     screen.fill(WHITE)
     for i in range(game.size + 1):
         pygame.draw.line(screen, BLACK, (0, i * CELL_SIZE), (game.size * CELL_SIZE, i * CELL_SIZE), 2)
@@ -287,29 +255,43 @@ def draw_board_v1(screen, game):
     for row in range(game.size):
         for col in range(game.size):
             if game.board[row][col] == PLAYER_X:
-                margin = 10
-                start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
-                end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
-                pygame.draw.line(screen, RED, start_pos, end_pos, 3)
-                pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
+                if img_x:
+                    screen.blit(img_x, (col * CELL_SIZE, row * CELL_SIZE))
+                else:
+                    margin = 10
+                    start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
+                    end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
+                    pygame.draw.line(screen, RED, start_pos, end_pos, 3)
+                    pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
             elif game.board[row][col] == PLAYER_O:
-                center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
-                radius = CELL_SIZE // 2 - 10
-                pygame.draw.circle(screen, BLUE, center, radius, 3)
+                if img_o:
+                    screen.blit(img_o, (col * CELL_SIZE, row * CELL_SIZE))
+                else:
+                    center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
+                    radius = CELL_SIZE // 2 - 10
+                    pygame.draw.circle(screen, BLUE, center, radius, 3)
 
     if game.anim_active:
         col = game.anim_col
         center_x = col * CELL_SIZE + CELL_SIZE // 2
         center_y = game.anim_current_y
         if game.anim_player == PLAYER_X:
-            margin = 10
-            start_pos = (center_x - CELL_SIZE//2 + margin, center_y - CELL_SIZE//2 + margin)
-            end_pos = (center_x + CELL_SIZE//2 - margin, center_y + CELL_SIZE//2 - margin)
-            pygame.draw.line(screen, RED, start_pos, end_pos, 3)
-            pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
+            if img_x:
+                img_rect = img_x.get_rect(center=(int(center_x), int(center_y)))
+                screen.blit(img_x, img_rect)
+            else:
+                margin = 10
+                start_pos = (center_x - CELL_SIZE//2 + margin, center_y - CELL_SIZE//2 + margin)
+                end_pos = (center_x + CELL_SIZE//2 - margin, center_y + CELL_SIZE//2 - margin)
+                pygame.draw.line(screen, RED, start_pos, end_pos, 3)
+                pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
         else:
-            radius = CELL_SIZE // 2 - 10
-            pygame.draw.circle(screen, BLUE, (int(center_x), int(center_y)), radius, 3)
+            if img_o:
+                img_rect = img_o.get_rect(center=(int(center_x), int(center_y)))
+                screen.blit(img_o, img_rect)
+            else:
+                radius = CELL_SIZE // 2 - 10
+                pygame.draw.circle(screen, BLUE, (int(center_x), int(center_y)), radius, 3)
 
     panel_rect = pygame.Rect(0, game.size * CELL_SIZE, WINDOW_WIDTH, INFO_PANEL_HEIGHT)
     pygame.draw.rect(screen, GRAY, panel_rect)
@@ -317,9 +299,9 @@ def draw_board_v1(screen, game):
 
     if game.game_over:
         if game.winner is not None:
-            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Нажмите R для новой игры"
+            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Игра окончена"
         else:
-            text = "Ничья! Нажмите R для новой игры"
+            text = "Ничья! Игра окончена"
     else:
         if game.anim_active:
             text = f"Ходит {PLAYER_SYMBOL[game.current_player]}"
@@ -337,33 +319,38 @@ def run_v1():
     pygame.display.set_caption(f"[V1] Гравитация {SIZE}x{SIZE} (победа - {WIN_LINE} в ряд)")
     clock = pygame.time.Clock()
     game = GameV1(SIZE, WIN_LINE)
-    bot = Bot(game, max_depth=3)  # глубина 3 допустима, так как ходов мало
+    bot = Bot(game, max_depth=1)
+    img_x, img_o = load_images()
     running = True
 
-    while running:
+    while not game.game_over:
         current_time = pygame.time.get_ticks()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
                 pygame.quit()
-                sys.exit()
+                return 0  # при закрытии окна считаем проигрышем
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = pygame.mouse.get_pos()
                 col = game.get_col_from_pos(pos)
                 if col is not None:
                     game.start_animation(col)
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                game.reset()
 
-        # Ход бота (нолики)
         if not game.game_over and game.current_player == PLAYER_O and not game.anim_active:
             move = bot.get_best_move()
             if move is not None:
                 game.start_animation(move)
 
         game.update_animation(current_time)
-        draw_board_v1(screen, game)
+        draw_board_v1(screen, game, img_x, img_o)
         clock.tick(60)
+
+    pygame.time.wait(1000)  # небольшая пауза, чтобы игрок увидел результат
+    pygame.quit()
+    # Возвращаем 1, если победил X или ничья, иначе 0
+    if game.winner == PLAYER_X or game.winner is None:
+        return 1
+    else:
+        return 0
 
 # ---------------------------------------------------------
 # Версия 2: сдвиг нечётных столбцов вниз
@@ -465,7 +452,6 @@ class GameV2:
             return row, col
         return None
 
-    # Методы для бота
     def get_possible_moves(self, player):
         moves = []
         for r in range(self.size):
@@ -483,7 +469,7 @@ class GameV2:
         new.moves_count = self.moves_count
         return new
 
-def draw_board_v2(screen, game):
+def draw_board_v2(screen, game, img_x, img_o):
     screen.fill(WHITE)
     for i in range(game.size + 1):
         pygame.draw.line(screen, BLACK, (0, i * CELL_SIZE), (game.size * CELL_SIZE, i * CELL_SIZE), 2)
@@ -492,15 +478,21 @@ def draw_board_v2(screen, game):
     for row in range(game.size):
         for col in range(game.size):
             if game.board[row][col] == PLAYER_X:
-                margin = 10
-                start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
-                end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
-                pygame.draw.line(screen, RED, start_pos, end_pos, 3)
-                pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
+                if img_x:
+                    screen.blit(img_x, (col * CELL_SIZE, row * CELL_SIZE))
+                else:
+                    margin = 10
+                    start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
+                    end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
+                    pygame.draw.line(screen, RED, start_pos, end_pos, 3)
+                    pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
             elif game.board[row][col] == PLAYER_O:
-                center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
-                radius = CELL_SIZE // 2 - 10
-                pygame.draw.circle(screen, BLUE, center, radius, 3)
+                if img_o:
+                    screen.blit(img_o, (col * CELL_SIZE, row * CELL_SIZE))
+                else:
+                    center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
+                    radius = CELL_SIZE // 2 - 10
+                    pygame.draw.circle(screen, BLUE, center, radius, 3)
 
     panel_rect = pygame.Rect(0, game.size * CELL_SIZE, WINDOW_WIDTH, INFO_PANEL_HEIGHT)
     pygame.draw.rect(screen, GRAY, panel_rect)
@@ -508,9 +500,9 @@ def draw_board_v2(screen, game):
 
     if game.game_over:
         if game.winner is not None:
-            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Нажмите R для новой игры"
+            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Игра окончена"
         else:
-            text = "Ничья! Нажмите R для новой игры"
+            text = "Ничья! Игра окончена"
     else:
         text = f"Ходит {PLAYER_SYMBOL[game.current_player]}"
 
@@ -525,32 +517,36 @@ def run_v2():
     pygame.display.set_caption(f"[V2] Сдвиг столбцов {SIZE}x{SIZE} (победа - {WIN_LINE} в ряд)")
     clock = pygame.time.Clock()
     game = GameV2(SIZE, WIN_LINE)
-    bot = Bot(game, max_depth=2)  # глубина 2 для скорости
+    bot = Bot(game, max_depth=1)
+    img_x, img_o = load_images()
     running = True
 
-    while running:
+    while not game.game_over:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
                 pygame.quit()
-                sys.exit()
+                return 0
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = pygame.mouse.get_pos()
                 cell = game.get_cell_from_pos(pos)
                 if cell is not None:
                     row, col = cell
                     game.make_move((row, col))
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                game.reset()
 
-        # Ход бота (нолики)
         if not game.game_over and game.current_player == PLAYER_O:
             move = bot.get_best_move()
             if move is not None:
                 game.make_move(move)
 
-        draw_board_v2(screen, game)
+        draw_board_v2(screen, game, img_x, img_o)
         clock.tick(30)
+
+    pygame.time.wait(1000)
+    pygame.quit()
+    if game.winner == PLAYER_X or game.winner is None:
+        return 1
+    else:
+        return 0
 
 # ---------------------------------------------------------
 # Версия 3: сдвиг строк (чередование чётности и направления)
@@ -668,7 +664,6 @@ class GameV3:
             return row, col
         return None
 
-    # Методы для бота
     def get_possible_moves(self, player):
         moves = []
         for r in range(self.size):
@@ -688,7 +683,7 @@ class GameV3:
         new.shift_parity = self.shift_parity
         return new
 
-def draw_board_v3(screen, game):
+def draw_board_v3(screen, game, img_x, img_o):
     screen.fill(WHITE)
     for i in range(game.size + 1):
         pygame.draw.line(screen, BLACK, (0, i * CELL_SIZE), (game.size * CELL_SIZE, i * CELL_SIZE), 2)
@@ -697,15 +692,21 @@ def draw_board_v3(screen, game):
     for row in range(game.size):
         for col in range(game.size):
             if game.board[row][col] == PLAYER_X:
-                margin = 10
-                start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
-                end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
-                pygame.draw.line(screen, RED, start_pos, end_pos, 3)
-                pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
+                if img_x:
+                    screen.blit(img_x, (col * CELL_SIZE, row * CELL_SIZE))
+                else:
+                    margin = 10
+                    start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
+                    end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
+                    pygame.draw.line(screen, RED, start_pos, end_pos, 3)
+                    pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
             elif game.board[row][col] == PLAYER_O:
-                center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
-                radius = CELL_SIZE // 2 - 10
-                pygame.draw.circle(screen, BLUE, center, radius, 3)
+                if img_o:
+                    screen.blit(img_o, (col * CELL_SIZE, row * CELL_SIZE))
+                else:
+                    center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
+                    radius = CELL_SIZE // 2 - 10
+                    pygame.draw.circle(screen, BLUE, center, radius, 3)
 
     panel_rect = pygame.Rect(0, game.size * CELL_SIZE, WINDOW_WIDTH, INFO_PANEL_HEIGHT)
     pygame.draw.rect(screen, GRAY, panel_rect)
@@ -713,9 +714,9 @@ def draw_board_v3(screen, game):
 
     if game.game_over:
         if game.winner is not None:
-            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Нажмите R для новой игры"
+            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Игра окончена"
         else:
-            text = "Ничья! Нажмите R для новой игры"
+            text = "Ничья! Игра окончена"
     else:
         text = f"Ходит {PLAYER_SYMBOL[game.current_player]}"
 
@@ -730,32 +731,36 @@ def run_v3():
     pygame.display.set_caption(f"[V3] Сдвиг строк {SIZE}x{SIZE} (победа - {WIN_LINE} в ряд)")
     clock = pygame.time.Clock()
     game = GameV3(SIZE, WIN_LINE)
-    bot = Bot(game, max_depth=2)  # глубина 2
+    bot = Bot(game, max_depth=1)
+    img_x, img_o = load_images()
     running = True
 
-    while running:
+    while not game.game_over:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
                 pygame.quit()
-                sys.exit()
+                return 0
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = pygame.mouse.get_pos()
                 cell = game.get_cell_from_pos(pos)
                 if cell is not None:
                     row, col = cell
                     game.make_move((row, col))
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                game.reset()
 
-        # Ход бота (нолики)
         if not game.game_over and game.current_player == PLAYER_O:
             move = bot.get_best_move()
             if move is not None:
                 game.make_move(move)
 
-        draw_board_v3(screen, game)
+        draw_board_v3(screen, game, img_x, img_o)
         clock.tick(30)
+
+    pygame.time.wait(1000)
+    pygame.quit()
+    if game.winner == PLAYER_X or game.winner is None:
+        return 1
+    else:
+        return 0
 
 # ---------------------------------------------------------
 # Версия 4: гравитация + поворот доски каждые 3 хода + анимация падения
@@ -970,7 +975,6 @@ class GameV4:
             return col
         return None
 
-    # Методы для бота
     def get_possible_moves(self, player):
         moves = []
         for col in range(self.size):
@@ -992,17 +996,13 @@ class GameV4:
         if self.moves_count == self.size * self.size:
             self.game_over = True
             return True
-        # Поворот и гравитация
         if not self.game_over and self.moves_count % 3 == 0:
-            # Поворот
             rotated = [[EMPTY]*self.size for _ in range(self.size)]
             for i in range(self.size):
                 for j in range(self.size):
                     rotated[j][self.size-1-i] = self.board[i][j]
             self.board = rotated
-            # Гравитация
             self.board = self._apply_gravity_to_board(self.board)
-            # Проверка победы после
             winner = self._check_win_any()
             if winner is not None:
                 self.game_over = True
@@ -1012,7 +1012,6 @@ class GameV4:
                 self.game_over = True
                 self.winner = None
                 return True
-        # Смена игрока
         if not self.game_over:
             self.current_player = PLAYER_O if self.current_player == PLAYER_X else PLAYER_X
         return True
@@ -1027,7 +1026,7 @@ class GameV4:
         new.marker_pos = self.marker_pos
         return new
 
-def draw_board_v4(screen, game):
+def draw_board_v4(screen, game, img_x, img_o):
     screen.fill(WHITE)
     for i in range(game.size + 1):
         pygame.draw.line(screen, BLACK, (0, i * CELL_SIZE), (game.size * CELL_SIZE, i * CELL_SIZE), 2)
@@ -1037,41 +1036,63 @@ def draw_board_v4(screen, game):
         for piece in game.falling_pieces:
             x, y = piece.get_current_position()
             if piece.player == PLAYER_X:
-                margin = 10
-                start_pos = (x - CELL_SIZE//2 + margin, y - CELL_SIZE//2 + margin)
-                end_pos = (x + CELL_SIZE//2 - margin, y + CELL_SIZE//2 - margin)
-                pygame.draw.line(screen, RED, start_pos, end_pos, 3)
-                pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
+                if img_x:
+                    img_rect = img_x.get_rect(center=(int(x), int(y)))
+                    screen.blit(img_x, img_rect)
+                else:
+                    margin = 10
+                    start_pos = (x - CELL_SIZE//2 + margin, y - CELL_SIZE//2 + margin)
+                    end_pos = (x + CELL_SIZE//2 - margin, y + CELL_SIZE//2 - margin)
+                    pygame.draw.line(screen, RED, start_pos, end_pos, 3)
+                    pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
             else:
-                radius = CELL_SIZE // 2 - 10
-                pygame.draw.circle(screen, BLUE, (int(x), int(y)), radius, 3)
+                if img_o:
+                    img_rect = img_o.get_rect(center=(int(x), int(y)))
+                    screen.blit(img_o, img_rect)
+                else:
+                    radius = CELL_SIZE // 2 - 10
+                    pygame.draw.circle(screen, BLUE, (int(x), int(y)), radius, 3)
     else:
         for row in range(game.size):
             for col in range(game.size):
                 if game.board[row][col] == PLAYER_X:
-                    margin = 10
-                    start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
-                    end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
-                    pygame.draw.line(screen, RED, start_pos, end_pos, 3)
-                    pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
+                    if img_x:
+                        screen.blit(img_x, (col * CELL_SIZE, row * CELL_SIZE))
+                    else:
+                        margin = 10
+                        start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
+                        end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
+                        pygame.draw.line(screen, RED, start_pos, end_pos, 3)
+                        pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
                 elif game.board[row][col] == PLAYER_O:
-                    center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
-                    radius = CELL_SIZE // 2 - 10
-                    pygame.draw.circle(screen, BLUE, center, radius, 3)
+                    if img_o:
+                        screen.blit(img_o, (col * CELL_SIZE, row * CELL_SIZE))
+                    else:
+                        center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
+                        radius = CELL_SIZE // 2 - 10
+                        pygame.draw.circle(screen, BLUE, center, radius, 3)
 
     if game.anim_active:
         col = game.anim_col
         center_x = col * CELL_SIZE + CELL_SIZE // 2
         center_y = game.anim_current_y
         if game.anim_player == PLAYER_X:
-            margin = 10
-            start_pos = (center_x - CELL_SIZE//2 + margin, center_y - CELL_SIZE//2 + margin)
-            end_pos = (center_x + CELL_SIZE//2 - margin, center_y + CELL_SIZE//2 - margin)
-            pygame.draw.line(screen, RED, start_pos, end_pos, 3)
-            pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
+            if img_x:
+                img_rect = img_x.get_rect(center=(int(center_x), int(center_y)))
+                screen.blit(img_x, img_rect)
+            else:
+                margin = 10
+                start_pos = (center_x - CELL_SIZE//2 + margin, center_y - CELL_SIZE//2 + margin)
+                end_pos = (center_x + CELL_SIZE//2 - margin, center_y + CELL_SIZE//2 - margin)
+                pygame.draw.line(screen, RED, start_pos, end_pos, 3)
+                pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
         else:
-            radius = CELL_SIZE // 2 - 10
-            pygame.draw.circle(screen, BLUE, (int(center_x), int(center_y)), radius, 3)
+            if img_o:
+                img_rect = img_o.get_rect(center=(int(center_x), int(center_y)))
+                screen.blit(img_o, img_rect)
+            else:
+                radius = CELL_SIZE // 2 - 10
+                pygame.draw.circle(screen, BLUE, (int(center_x), int(center_y)), radius, 3)
 
     panel_rect = pygame.Rect(0, game.size * CELL_SIZE, WINDOW_WIDTH, INFO_PANEL_HEIGHT)
     pygame.draw.rect(screen, GRAY, panel_rect)
@@ -1079,9 +1100,9 @@ def draw_board_v4(screen, game):
 
     if game.game_over:
         if game.winner is not None:
-            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Нажмите R для новой игры"
+            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Игра окончена"
         else:
-            text = "Ничья! Нажмите R для новой игры"
+            text = "Ничья! Игра окончена"
     else:
         if game.pre_fall_delay_active:
             text = "Поворот! Падение через мгновение..."
@@ -1125,33 +1146,37 @@ def run_v4():
     pygame.display.set_caption(f"[V4] Гравитация + поворот {SIZE}x{SIZE} (победа - {WIN_LINE} в ряд)")
     clock = pygame.time.Clock()
     game = GameV4(SIZE, WIN_LINE)
-    bot = Bot(game, max_depth=3)  # ходов мало (колонки)
+    bot = Bot(game, max_depth=1)
+    img_x, img_o = load_images()
     running = True
 
-    while running:
+    while not game.game_over:
         current_time = pygame.time.get_ticks()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
                 pygame.quit()
-                sys.exit()
+                return 0
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = pygame.mouse.get_pos()
                 col = game.get_col_from_pos(pos)
                 if col is not None:
                     game.start_animation(col)
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                game.reset()
 
-        # Ход бота (нолики)
         if not game.game_over and game.current_player == PLAYER_O and not game.anim_active and not game.rotation_fall_active and not game.pre_fall_delay_active:
             move = bot.get_best_move()
             if move is not None:
                 game.start_animation(move)
 
         game.update_animation(current_time)
-        draw_board_v4(screen, game)
+        draw_board_v4(screen, game, img_x, img_o)
         clock.tick(60)
+
+    pygame.time.wait(1000)
+    pygame.quit()
+    if game.winner == PLAYER_X or game.winner is None:
+        return 1
+    else:
+        return 0
 
 # ---------------------------------------------------------
 # Версия 5: случайное превращение X <-> O каждый 3-й ход
@@ -1231,7 +1256,6 @@ class GameV5:
                 self.winner = PLAYER_O
 
     def _transform_deterministic(self):
-        # Превращаем первые найденные X и O (по порядку обхода)
         x_pos = None
         o_pos = None
         for r in range(self.size):
@@ -1296,7 +1320,6 @@ class GameV5:
             return row, col
         return None
 
-    # Методы для бота
     def get_possible_moves(self, player):
         moves = []
         for r in range(self.size):
@@ -1314,7 +1337,7 @@ class GameV5:
         new.moves_count = self.moves_count
         return new
 
-def draw_board_v5(screen, game):
+def draw_board_v5(screen, game, img_x, img_o):
     screen.fill(WHITE)
     for i in range(game.size + 1):
         pygame.draw.line(screen, BLACK, (0, i * CELL_SIZE), (game.size * CELL_SIZE, i * CELL_SIZE), 2)
@@ -1323,15 +1346,21 @@ def draw_board_v5(screen, game):
     for row in range(game.size):
         for col in range(game.size):
             if game.board[row][col] == PLAYER_X:
-                margin = 10
-                start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
-                end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
-                pygame.draw.line(screen, RED, start_pos, end_pos, 3)
-                pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
+                if img_x:
+                    screen.blit(img_x, (col * CELL_SIZE, row * CELL_SIZE))
+                else:
+                    margin = 10
+                    start_pos = (col * CELL_SIZE + margin, row * CELL_SIZE + margin)
+                    end_pos = ((col + 1) * CELL_SIZE - margin, (row + 1) * CELL_SIZE - margin)
+                    pygame.draw.line(screen, RED, start_pos, end_pos, 3)
+                    pygame.draw.line(screen, RED, (end_pos[0], start_pos[1]), (start_pos[0], end_pos[1]), 3)
             elif game.board[row][col] == PLAYER_O:
-                center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
-                radius = CELL_SIZE // 2 - 10
-                pygame.draw.circle(screen, BLUE, center, radius, 3)
+                if img_o:
+                    screen.blit(img_o, (col * CELL_SIZE, row * CELL_SIZE))
+                else:
+                    center = (col * CELL_SIZE + CELL_SIZE // 2, row * CELL_SIZE + CELL_SIZE // 2)
+                    radius = CELL_SIZE // 2 - 10
+                    pygame.draw.circle(screen, BLUE, center, radius, 3)
 
     panel_rect = pygame.Rect(0, game.size * CELL_SIZE, WINDOW_WIDTH, INFO_PANEL_HEIGHT)
     pygame.draw.rect(screen, GRAY, panel_rect)
@@ -1339,9 +1368,9 @@ def draw_board_v5(screen, game):
 
     if game.game_over:
         if game.winner is not None:
-            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Нажмите R для новой игры"
+            text = f"Победил {PLAYER_SYMBOL[game.winner]}! Игра окончена"
         else:
-            text = "Ничья! Нажмите R для новой игры"
+            text = "Ничья! Игра окончена"
     else:
         text = f"Ходит {PLAYER_SYMBOL[game.current_player]}"
 
@@ -1355,29 +1384,24 @@ def run_v5():
     screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
     pygame.display.set_caption(f"[V5] Превращение {SIZE}x{SIZE} (победа - {WIN_LINE} в ряд)")
     clock = pygame.time.Clock()
-    # Для игры с человеком превращения случайны, для бота детерминированы
     game = GameV5(SIZE, WIN_LINE, deterministic=False)
-    bot = Bot(GameV5(SIZE, WIN_LINE, deterministic=True), max_depth=2)  # глубина 2
+    bot = Bot(GameV5(SIZE, WIN_LINE, deterministic=True), max_depth=1)
+    img_x, img_o = load_images()
     running = True
 
-    while running:
+    while not game.game_over:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
                 pygame.quit()
-                sys.exit()
+                return 0
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = pygame.mouse.get_pos()
                 cell = game.get_cell_from_pos(pos)
                 if cell is not None:
                     row, col = cell
                     game.make_move((row, col))
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                game.reset()
 
-        # Ход бота (нолики)
         if not game.game_over and game.current_player == PLAYER_O:
-            # Для бота используем копию игры с детерминированными превращениями
             temp_game = game.copy()
             temp_game.deterministic = True
             bot.game = temp_game
@@ -1385,25 +1409,29 @@ def run_v5():
             if move is not None:
                 game.make_move(move)
 
-        draw_board_v5(screen, game)
+        draw_board_v5(screen, game, img_x, img_o)
         clock.tick(30)
 
-# ==================== ЕДИНСТВЕННАЯ ФУНКЦИЯ ДЛЯ ЗАПУСКА ====================
-def cross_zero(version=None):
-    """
-    Запускает одну из пяти версий игры.
-    Если version не указана (или None), выбирается случайная версия от 1 до 5.
-    """
-    if version is None:
-        version = random.randint(1, 5)
-    #print(f"Запускается версия {version}")
-    if version == 1:
-        run_v1()
-    elif version == 2:
-        run_v2()
-    elif version == 3:
-        run_v3()
-    elif version == 4:
-        run_v4()
+    pygame.time.wait(1000)
+    pygame.quit()
+    if game.winner == PLAYER_X or game.winner is None:
+        return 1
     else:
-        run_v5()
+        return 0
+
+# ==================== ГЛАВНЫЙ БЛОК ВЫБОРА ВЕРСИИ ====================
+def cross_zero():
+    version = random.randint(1, 5)
+    result = 0
+    if version == 1:
+        result = run_v1()
+    elif version == 2:
+        result = run_v2()
+    elif version == 3:
+        result = run_v3()
+    elif version == 4:
+        result = run_v4()
+    else:
+        result = run_v5()
+    sys.exit(result)
+    return result
