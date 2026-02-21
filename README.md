@@ -25,9 +25,11 @@
 
 **Использованные технологии**
 
-Python
-PyCharm
-Visual Studio Code
+~Python
+
+~PyCharm
+
+~Visual Studio Code
 
 
 
